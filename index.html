@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>도토잼 - 실시간 랭킹 게임</title>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+    <style>
+        body { margin: 0; background: #222; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; font-family: sans-serif; color: white; }
+        canvas { background: #fff; border: 3px solid #d4af37; display: none; } /* 게임 시작 전엔 숨김 */
+        
+        #startBox { background: #333; padding: 30px; border-radius: 15px; text-align: center; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
+        #nickInput { padding: 10px; font-size: 16px; border-radius: 5px; border: none; width: 200px; margin-bottom: 10px; }
+        #startBtn { padding: 10px 20px; font-size: 16px; background: #d4af37; color: white; border: none; border-radius: 5px; cursor: pointer; }
+        
+        #ranking { position: fixed; right: 20px; top: 20px; background: rgba(0,0,0,0.7); padding: 15px; border-radius: 10px; width: 180px; font-size: 14px; }
+        .score-val { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); font-size: 30px; font-weight: bold; display: none; }
+    </style>
+</head>
+<body>
+
+    <div id="startBox">
+        <h1>도토잼 피하기</h1>
+        <input type="text" id="nickInput" placeholder="닉네임을 입력하세요"> <br>
+        <button id="startBtn">게임 시작!</button>
+    </div>
+
+    <div id="scoreDisplay" class="score-val">점수: 0</div>
+    <div id="ranking">
+        <strong style="color: #d4af37;">🏆 실시간 TOP 10</strong>
+        <div id="rankList" style="margin-top: 10px;">불러오는 중...</div>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+<script>
+    // --- [중요] Firebase 설정 (본인의 키값 적용됨) ---
+    const firebaseConfig = {
+        apiKey: "AIzaSyBcgml8Lw3hx4d8X5PhKKmusyL6Mt4n7UY",
+        authDomain: "dotojam-a6500.firebaseapp.com",
+        projectId: "dotojam-a6500",
+        storageBucket: "dotojam-a6500.firebasestorage.app",
+        messagingSenderId: "356008133459",
+        appId: "1:356008133459:web:865d4a1b7ca4ff5c11d7a6"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.firestore();
+
+    // --- 랭킹 불러오기 함수 ---
+    function loadRanking() {
+        db.collection("rankings").orderBy("score", "desc").limit(10).get().then((snapshot) => {
+            const rankList = document.getElementById("rankList");
+            rankList.innerHTML = "";
+            snapshot.forEach((doc) => {
+                const data = doc.data();
+                rankList.innerHTML += `<div style="margin-bottom:5px;">${data.name}: ${data.score}점</div>`;
+            });
+        });
+    }
+    loadRanking(); // 처음 실행 시 랭킹 로드
+
+    // --- 게임 변수 설정 ---
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+    canvas.width = 400;
+    canvas.height = 600;
+
+    let score = 0;
+    let gameRunning = false;
+    let nickname = "";
+    const obstacles = [];
+    const player = { x: 185, y: 550, w: 30, h: 30, speed: 7 };
+    const keys = {};
+
+    window.addEventListener("keydown", (e) => keys[e.code] = true);
+    window.addEventListener("keyup", (e) => keys[e.code] = false);
+
+    // --- 게임 시작 버튼 클릭 시 ---
+    document.getElementById("startBtn").onclick = () => {
+        nickname = document.getElementById("nickInput").value;
+        if (!nickname) { alert("닉네임을 입력해주세요!"); return; }
+        
+        document.getElementById("startBox").style.display = "none";
+        canvas.style.display = "block";
+        document.getElementById("scoreDisplay").style.display = "block";
+        gameRunning = true;
+        draw(); // 게임 루프 시작
+    };
+
+    // --- 게임 오버 및 데이터 저장 ---
+    function gameOver() {
+        gameRunning = false;
+        alert(`게임 오버! ${nickname}님의 점수는 ${score}점입니다.`);
+        
+        // Firebase에 저장
+        db.collection("rankings").add({
+            name: nickname,
+            score: score,
+            date: new Date()
+        }).then(() => {
+            location.reload(); // 저장 후 재시작
+        });
+    }
+
+    function draw() {
+        if (!gameRunning) return;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // 플레이어 이동
+        if (keys["ArrowLeft"] && player.x > 0) player.x -= player.speed;
+        if (keys["ArrowRight"] && player.x < canvas.width - player.w) player.x += player.speed;
+
+        ctx.fillStyle = "#3498db";
+        ctx.fillRect(player.x, player.y, player.w, player.h);
+
+        // 장애물 생성 및 이동
+        if (Math.random() < 0.05) {
+            obstacles.push({ x: Math.random() * 370, y: 0, w: 30, h: 30, speed: 4 + (score/10) });
+        }
+
+        for (let i = obstacles.length - 1; i >= 0; i--) {
+            const o = obstacles[i];
+            o.y += o.speed;
+            ctx.fillStyle = "#e74c3c";
+            ctx.fillRect(o.x, o.y, o.w, o.h);
+
+            // 충돌 체크
+            if (player.x < o.x + o.w && player.x + player.w > o.x && player.y < o.y + o.h && player.y + player.h > o.y) {
+                gameOver();
+                return;
+            }
+
+            // 점수 획득
+            if (o.y > canvas.height) {
+                obstacles.splice(i, 1);
+                score++;
+                document.getElementById("scoreDisplay").innerText = "점수: " + score;
+            }
+        }
+        requestAnimationFrame(draw);
+    }
+</script>
+</body>
+</html>
